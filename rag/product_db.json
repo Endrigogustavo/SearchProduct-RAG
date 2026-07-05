@@ -1,0 +1,35 @@
+[
+  {
+    "Nome": "RayNeo Óculos Air 4 Pro AR/XR",
+    "gtin": null,
+    "preço": 3499.0,
+    "categoria": "Óculos de Realidade Virtual",
+    "categoria_hierarquia": "Eletrônicos > Tecnologia Vestível > Óculos de Realidade Virtual e Aumentada",
+    "ncm": "9004.90.90",
+    "confiabilidade": "Média",
+    "ncm_fonte": "local",
+    "ncm_descricao_local": "Outros"
+  },
+  {
+    "Nome": "Xiaomi POCO X7 Pro",
+    "gtin": null,
+    "preço": "R$ 2.499,00",
+    "categoria": "Celulares e Smartphones",
+    "categoria_hierarquia": "Eletrônicos e Tecnologia > Celulares e Comunicação > Celulares e Smartphones",
+    "ncm": "8517.13.00",
+    "confiabilidade": "Baixa",
+    "ncm_fonte": "local",
+    "ncm_descricao_local": "-- Telefones inteligentes (<i>smartphones</i>)"
+  },
+  {
+    "Nome": "Motorola Moto G60",
+    "gtin": "7892597350759",
+    "preço": 1399.0,
+    "categoria": "Celulares e Smartphones",
+    "categoria_hierarquia": "Eletrônicos e Tecnologia > Celulares e Smartphones > Smartphones",
+    "ncm": "8517.13.00",
+    "confiabilidade": "alta",
+    "ncm_fonte": "local",
+    "ncm_descricao_local": "-- Telefones inteligentes (<i>smartphones</i>)"
+  }
+]
