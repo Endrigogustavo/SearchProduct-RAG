@@ -1,5 +1,6 @@
 import os
 import json
+
 import llm.model.gemini as gemini
 import llm.prompt.prompt as prompt_module
 
@@ -12,12 +13,68 @@ from repository.produtoRepository import (
 	find_ncm_candidates,
 	find_ncm_by_code,
 	build_rag_context,
+	normalize_text,
 )
 from dotenv import load_dotenv
 
 load_dotenv()
 
-DEFAULT_TOKEN = os.environ.get("ISSTUDIO_TOKEN")
+
+def get_gemini_token() -> str | None:
+	return os.environ.get("GEMINI_API_KEY") or os.environ.get("ISSTUDIO_TOKEN")
+
+
+def call_llm(prompt: str) -> str:
+	"""Consulta o Gemini e retorna o texto da resposta."""
+	print("Consultando Gemini (com Google Search)...")
+	return gemini.call_gemini(get_gemini_token(), prompt)
+
+
+def parse_product_json(resp_text: str) -> dict | None:
+	"""Converte a resposta do LLM em dict, tolerando texto ao redor do JSON."""
+	try:
+		produto = json.loads(resp_text)
+		return produto if isinstance(produto, dict) else None
+	except (json.JSONDecodeError, TypeError):
+		pass
+	start = resp_text.find("{")
+	end = resp_text.rfind("}")
+	if start != -1 and end > start:
+		try:
+			produto = json.loads(resp_text[start:end + 1])
+			return produto if isinstance(produto, dict) else None
+		except json.JSONDecodeError:
+			return None
+	return None
+
+
+def upsert_product(db: list, entry: dict) -> str:
+	"""Atualiza um produto existente (mesmo GTIN ou mesmo nome) ou insere um novo."""
+	for i, existing in enumerate(db):
+		same_gtin = entry.get("gtin") and existing.get("gtin") == entry.get("gtin")
+		same_name = normalize_text(existing.get("Nome", "")) == normalize_text(entry.get("Nome", ""))
+		if same_gtin or same_name:
+			# Preserva campos antigos que a nova consulta não preencheu.
+			merged = {**existing, **{k: v for k, v in entry.items() if v is not None}}
+			db[i] = merged
+			return "atualizado"
+	db.append(entry)
+	return "inserido"
+
+
+def collect_manual_entry(nome: str) -> dict | None:
+	if not input("Deseja salvar manualmente os campos no JSON? (s/n): ").lower().startswith("s"):
+		return None
+	return {
+		"Nome": input(f"Nome [{nome}]: ").strip() or nome,
+		"preço": input("Preço: ").strip() or None,
+		"gtin": input("GTIN/EAN/UPC: ").strip() or None,
+		"categoria": input("Categoria: ").strip() or None,
+		"categoria_hierarquia": input("Hierarquia de categoria: ").strip() or None,
+		"ncm": input("NCM: ").strip() or None,
+		"confiabilidade": input("Confiabilidade: ").strip() or None,
+		"imagem": input("URL da imagem: ").strip() or None,
+	}
 
 
 def run():
@@ -34,58 +91,20 @@ def run():
 	gtin_from_input = extract_gtin(nome)
 	candidate_ncm = find_ncm_candidates(nome, ncm_table, top_n=5)
 
-	prompt = prompt_module.build_prompt(nome, rag)
-
-	if candidate_ncm:
-		prompt += "\nPossíveis NCMs locais para este produto:\n"
-		for candidate in candidate_ncm:
-			prompt += f"- {candidate.get('Codigo')}: {candidate.get('Descricao')}\n"
+	prompt = prompt_module.build_prompt(nome, rag, candidatos_ncm=candidate_ncm)
 
 	try:
-		print("Consultando a IA externa via genai client para obter/normalizar dados...")
-		token = os.environ.get("ISSTUDIO_TOKEN", DEFAULT_TOKEN)
-		resp_text = gemini.call_isstudio_via_genai(token, prompt, model=os.environ.get("GENAI_MODEL"))
+		resp_text = call_llm(prompt)
 	except Exception as e:
-		print("Erro ao chamar o cliente genai:", e)
+		print(f"Erro ao consultar a IA: {e}")
 		return
 
-	produto = None
-	try:
-		produto = json.loads(resp_text)
-		if not isinstance(produto, dict):
-			produto = None
-	except Exception:
-		start = resp_text.find("{")
-		end = resp_text.rfind("}")
-		if start != -1 and end != -1 and end > start:
-			try:
-				produto = json.loads(resp_text[start:end+1])
-			except Exception:
-				produto = None
-
+	produto = parse_product_json(resp_text)
 	if not produto:
 		print("Resposta da IA não pôde ser convertida para JSON. Exibindo texto bruto:")
 		print(resp_text)
-		if input("Deseja salvar manualmente os campos no JSON? (s/n): ").lower().startswith("s"):
-			nomef = input(f"Nome [{nome}]: ").strip() or nome
-			preco = input("Preço: ").strip() or None
-			gtin = input("GTIN/EAN/UPC: ").strip() or None
-			categoria = input("Categoria: ").strip() or None
-			categoria_hierarquia = input("Hierarquia de categoria: ").strip() or None
-			ncm = input("NCM: ").strip() or None
-			confiabilidade = input("Confiabilidade (0-1): ").strip() or None
-			imagem = input("URL da imagem: ").strip() or None
-			produto = {
-				"Nome": nomef,
-				"preço": preco,
-				"gtin": gtin,
-				"categoria": categoria,
-				"categoria_hierarquia": categoria_hierarquia,
-				"ncm": ncm,
-				"confiabilidade": confiabilidade,
-				"imagem": imagem,
-			}
-		else:
+		produto = collect_manual_entry(nome)
+		if not produto:
 			print("Nada salvo.")
 			return
 
@@ -100,24 +119,26 @@ def run():
 		"imagem": produto.get("imagem") or produto.get("image") or produto.get("Image"),
 	}
 
-	# Validar e completar NCM - SEMPRE tenta buscar na base primeiro
+	# Validar e completar NCM — sempre confere na base oficial local
 	if not entry["ncm"] and candidate_ncm:
 		entry["ncm"] = candidate_ncm[0].get("Codigo")
 		entry["ncm_fonte"] = "local"
-		print(f"✓ NCM encontrado na base local: {entry['ncm']}")
+		print(f"[OK] NCM encontrado na base local: {entry['ncm']}")
 	elif entry["ncm"]:
 		verified = find_ncm_by_code(str(entry["ncm"]), ncm_table)
 		entry["ncm_fonte"] = "local" if verified else "ia"
 		if verified:
 			entry["ncm_descricao_local"] = verified.get("Descricao")
-			print(f"✓ NCM validado na base local: {entry['ncm']}")
+			print(f"[OK] NCM validado na base local: {entry['ncm']}")
 		else:
-			print(f"⚠ NCM da IA não encontrado na base: {entry['ncm']}")
+			print(f"[!] NCM da IA nao encontrado na base oficial - descartando: {entry['ncm']}")
+			entry["ncm"] = None
+			entry["ncm_fonte"] = None
 
 	if not entry["categoria_hierarquia"] and entry["categoria"]:
 		entry["categoria_hierarquia"] = entry["categoria"]
 
-	# Calcular confiabilidade baseada em completude dos dados
+	# Confiabilidade baseada em completude dos dados
 	campos_obrigatorios = ["Nome", "preço", "gtin", "categoria", "ncm"]
 	campos_preenchidos = sum(1 for campo in campos_obrigatorios if entry.get(campo))
 	percentual_completude = (campos_preenchidos / len(campos_obrigatorios)) * 100
@@ -133,19 +154,18 @@ def run():
 	else:
 		confiabilidade_calculada = "Muito Baixa"
 
-	# Usar confiabilidade calculada como padrão, mas permitir override se informado pela IA
 	if not entry["confiabilidade"] or entry["confiabilidade"] == "Muito Baixa":
 		entry["confiabilidade"] = confiabilidade_calculada
-	
+
 	print(f"\nCompletude dos dados: {percentual_completude:.0f}% ({campos_preenchidos}/{len(campos_obrigatorios)} campos obrigatórios)")
 	print(f"Confiabilidade: {entry['confiabilidade']}")
 
 	print("JSON do produto retornado:")
 	print(json.dumps(entry, ensure_ascii=False, indent=2))
 
-	db.append(entry)
+	resultado = upsert_product(db, entry)
 	save_db(db)
-	print("Produto salvo na base (product_db.json).")
+	print(f"Produto {resultado} na base (product_db.json).")
 
 
 if __name__ == "__main__":
