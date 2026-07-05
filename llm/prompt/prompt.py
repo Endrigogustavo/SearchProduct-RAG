@@ -1,20 +1,35 @@
 def build_prompt(nome, rag):
-	prompt = (
-		"Você é um especialista em produtos e dados de mercado. "
-		"TAREFA: Extrair informações PRECISAS e CONFIÁVEIS para o produto.\n\n"
-		f"**Nome do produto a pesquisar: {nome}**\n\n"
-		"**CONTEXTO - Base de produtos local (RAG):**\n"
-		f"{rag if rag else '[Nenhum produto similar encontrado na base]'}\n\n"
-		"**INSTRUÇÕES CRÍTICAS:**\n"
-		"1. BUSQUE informações APENAS de fontes confiáveis (sites oficiais, marketplaces estabelecidos, Wikipedia).\n"
-		"2. PREENCHA obrigatoriamente: Nome, preço (em reais, valor numérico), categoria, categoria_hierarquia, NCM, gtin.\n"
-		"3. Se NÃO CONSEGUIR encontrar um campo obrigatório, MARQUE como null E AJUSTE 'confiabilidade' para 'Baixa' ou 'Muito Baixa'.\n"
-		"4. NUNCA invente dados - retorne null ao invés de adivinhar.\n"
-		"5. NCM: Deve ser código válido no formato XXXX.XX.XX (ex: 8517.13.00). Se não souber, deixe null.\n"
-		"6. GTIN/EAN: Código de barras do produto (8-14 dígitos). Se não encontrar, deixe null.\n"
-		"7. Imagem: URL https VÁLIDA de imagem de alta qualidade. Teste se a URL é acessível. Se não conseguir URL válida, deixe null.\n"
-		"8. Confiabilidade: Calcule como 'Muito Alta' (todos campos preenchidos e verificados), 'Alta' (maioria dos campos), 'Média' (50% dos campos), 'Baixa' (poucas informações), 'Muito Baixa' (informações insuficientes).\n\n"
-		"**FORMATO ESPERADO (JSON puro, sem markdown):**\n"
-		"{ \"Nome\": \"...\", \"gtin\": \"...\", \"preço\": 0.00, \"categoria\": \"...\", \"categoria_hierarquia\": \"...\", \"ncm\": \"...\", \"confiabilidade\": \"...\", \"imagem\": \"https://...\" }"
-	)
-	return prompt
+    prompt = (
+        "Você é um motor de busca e normalização de produtos de alta precisão.\n"
+        f"OBJETIVO: Identificar e catalogar o produto: '{nome}'\n\n"
+        
+        "--- CONTEXTO DE PRODUTOS SIMILARES (RAG) ---\n"
+        f"{rag if rag else 'Nenhum dado local encontrado. Use seu conhecimento global.'}\n\n"
+        
+        "--- DIRETRIZES DE EXTRAÇÃO ---\n"
+        "1. GTIN (EAN/UPC): Tente extrair do contexto RAG ou identifique o GTIN padrão para este modelo/marca. "
+        "Se o nome contiver 8, 12 ou 13 dígitos, trate como o GTIN.\n"
+        "2. PREÇO: Busque o valor médio de mercado atual no Brasil (BRL). Use o valor numérico (ex: 1599.90). "
+        "Priorize preços de grandes varejistas (Amazon, Mercado Livre, Magalu).\n"
+        "3. CATEGORIA: Use uma taxonomia de e-commerce padrão. Em 'categoria_hierarquia', use o formato: 'Eletrônicos > Celulares > Smartphones'.\n"
+        "4. NCM: Identifique o NCM (Nomenclatura Comum do Mercosul) correto com base na descrição técnica. Formato: 0000.00.00.\n"
+        "5. IMAGEM: Retorne uma URL direta (.jpg, .png) de uma imagem representativa do produto.\n\n"
+
+        "--- REGRAS DE OURO ---\n"
+        "- Se o preço for incerto, forneça uma estimativa média baseada em dados recentes.\n"
+        "- Se o GTIN for absolutamente desconhecido, retorne null.\n"
+        "- O JSON deve ser válido e sem formatação Markdown (sem ```json).\n\n"
+        
+        "--- FORMATO DE SAÍDA ---\n"
+        "{"
+        " \"Nome\": \"Nome Comercial Completo\", "
+        " \"gtin\": \"Somente números ou null\", "
+        " \"preço\": 0.00, "
+        " \"categoria\": \"Nome Simples\", "
+        " \"categoria_hierarquia\": \"Pai > Filho > Neto\", "
+        " \"ncm\": \"0000.00.00\", "
+        " \"confiabilidade\": \"Muito Alta/Alta/Média/Baixa\", "
+        " \"imagem\": \"https://...\" "
+        "}"
+    )
+    return prompt

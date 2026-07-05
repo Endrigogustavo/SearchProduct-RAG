@@ -1,14 +1,3 @@
 [
-  {
-    "Nome": "Xiaomi POCO X7 Pro",
-    "gtin": null,
-    "preço": null,
-    "categoria": "Smartphones",
-    "categoria_hierarquia": "Celulares e Telefones > Smartphones > Xiaomi",
-    "ncm": "8517.13.00",
-    "confiabilidade": "Média",
-    "imagem": null,
-    "ncm_fonte": "local",
-    "ncm_descricao_local": "-- Telefones inteligentes (<i>smartphones</i>)"
-  }
+  
 ]

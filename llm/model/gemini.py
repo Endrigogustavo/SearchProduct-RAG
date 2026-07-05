@@ -3,11 +3,34 @@ from google import genai
 from typing import Any
 
 
+from google.genai import types # Importação necessária para as ferramentas
+
 def call_isstudio_via_genai(token: str, prompt: str, model: str | None = None) -> str:
-	model = model or os.environ.get("GENAI_MODEL", "gemini-3.5-flash")
-	client = genai.Client(api_key=token)
-	resp = client.interactions.create(model=model, input=prompt)
-	return extract_text_from_response(resp)
+    # Define o modelo (Gemini 2.0 Flash ou 3.5 Flash são ótimos para busca)
+    model_name = model or os.environ.get("GENAI_MODEL", "gemini-2.0-flash")
+    
+    client = genai.Client(api_key=token)
+
+    # 1. Configura a ferramenta de busca do Google
+    google_search_tool = types.Tool(
+        google_search=types.GoogleSearch()
+    )
+
+    # 2. Faz a chamada incluindo a ferramenta no config
+    # Usamos generate_content para garantir suporte total a tools e retorno de texto
+    response = client.models.generate_content(
+        model=model_name,
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            tools=[google_search_tool]
+        )
+    )
+
+    # O SDK novo já limpa a resposta em .text, mas mantemos sua lógica se preferir
+    return response.text
+
+# Caso você precise manter o extract_text_from_response por algum motivo específico:
+# return extract_text_from_response(response)
 
 
 def extract_text_from_response(resp: Any) -> str:

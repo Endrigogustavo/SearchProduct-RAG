@@ -13,8 +13,11 @@ from repository.produtoRepository import (
 	find_ncm_by_code,
 	build_rag_context,
 )
+from dotenv import load_dotenv
 
-DEFAULT_TOKEN = ""
+load_dotenv()
+
+DEFAULT_TOKEN = os.environ.get("ISSTUDIO_TOKEN")
 
 
 def run():
