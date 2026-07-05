@@ -1,162 +1,20 @@
 import os
-import re
 import json
-import difflib
-from typing import List, Dict, Any
-from google import genai
+import llm.model.gemini as gemini
+import llm.prompt.prompt as prompt_module
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "rag/product_db.json")
-NCM_PATH = os.path.join(os.path.dirname(__file__), "rag/Tabela_NCM_Vigente_20260705.json")
+from repository.produtoRepository import (
+	load_db,
+	save_db,
+	load_ncm_table,
+	extract_gtin,
+	search_db,
+	find_ncm_candidates,
+	find_ncm_by_code,
+	build_rag_context,
+)
+
 DEFAULT_TOKEN = ""
-
-
-def load_db() -> List[Dict[str, Any]]:
-	if not os.path.exists(DB_PATH):
-		return []
-	with open(DB_PATH, "r", encoding="utf-8") as f:
-		return json.load(f)
-
-
-def save_db(db: List[Dict[str, Any]]):
-	with open(DB_PATH, "w", encoding="utf-8") as f:
-		json.dump(db, f, ensure_ascii=False, indent=2)
-
-
-def load_ncm_table() -> List[Dict[str, Any]]:
-	if not os.path.exists(NCM_PATH):
-		return []
-	with open(NCM_PATH, "r", encoding="utf-8") as f:
-		data = json.load(f)
-	return data.get("Nomenclaturas", []) if isinstance(data, dict) else []
-
-
-def normalize_text(text: str) -> str:
-	return re.sub(r"[^0-9a-zA-Z]+", " ", (text or "").lower()).strip()
-
-
-def extract_gtin(text: str) -> str | None:
-	if not text:
-		return None
-	candidates = re.findall(r"\b(?:\d[\s-]*){8,14}\b", text)
-	for candidate in candidates:
-		cleaned = re.sub(r"[\s-]", "", candidate)
-		if 8 <= len(cleaned) <= 14:
-			return cleaned
-	return None
-
-
-def search_db(db: List[Dict[str, Any]], query: str, n=3) -> List[Dict[str, Any]]:
-	names = [p.get("Nome", "") for p in db]
-	matches = difflib.get_close_matches(query, names, n=n, cutoff=0.4)
-	return [p for p in db if p.get("Nome") in matches]
-
-
-def build_rag_context(matches: List[Dict[str, Any]]) -> str:
-	if not matches:
-		return ""
-	parts = []
-	for m in matches:
-		parts.append(
-			f"Nome: {m.get('Nome')} | Preço: {m.get('preço')} | Categoria: {m.get('categoria')} | NCM: {m.get('ncm')} | Confiabilidade: {m.get('confiabilidade')}"
-		)
-	return "\n".join(parts)
-
-
-def find_ncm_candidates(product_name: str, ncm_list: List[Dict[str, Any]], top_n: int = 5) -> List[Dict[str, Any]]:
-	if not product_name or not ncm_list:
-		return []
-
-	name_norm = normalize_text(product_name)
-	tokens = [t for t in name_norm.split() if len(t) >= 3 and t not in {"pro", "max", "plus", "mini", "ultra", "novo", "novo", "kit", "com"}]
-	candidates = []
-
-	for entry in ncm_list:
-		desc = normalize_text(entry.get("Descricao", ""))
-		if not desc:
-			continue
-		match_tokens = 0
-		score = 0
-		for token in tokens:
-			if re.search(rf"\b{re.escape(token)}\b", desc):
-				score += 20
-				match_tokens += 1
-			elif token in desc:
-				score += 4
-				match_tokens += 1
-		if match_tokens == 0:
-			continue
-		ratio = difflib.SequenceMatcher(None, name_norm, desc).ratio()
-		score += ratio * 20
-		if desc.startswith("-"):
-			score += 1
-		candidates.append({"entry": entry, "score": score})
-
-	candidates.sort(key=lambda item: item["score"], reverse=True)
-	return [item["entry"] for item in candidates[:top_n]]
-
-
-def find_ncm_by_code(code: str, ncm_list: List[Dict[str, Any]]) -> Dict[str, Any] | None:
-	if not code:
-		return None
-	code_norm = re.sub(r"[\.\s-]", "", code)
-	for entry in ncm_list:
-		if re.sub(r"[\.\s-]", "", entry.get("Codigo", "")) == code_norm:
-			return entry
-	return None
-
-
-def normalize_response_text(text: str) -> str:
-	"""Remove markdown e espaços, mantendo o texto limpo para extração de JSON."""
-	text = text.strip()
-	if text.startswith("```") and text.endswith("```"):
-		parts = text.split("\n")
-		if len(parts) >= 3:
-			return "\n".join(parts[1:-1]).strip()
-	return text
-
-
-def extract_text_from_response(resp: Any) -> str:
-	if hasattr(resp, "output_text") and isinstance(resp.output_text, str) and resp.output_text.strip():
-		return normalize_response_text(resp.output_text)
-
-	if hasattr(resp, "text") and isinstance(resp.text, str) and resp.text.strip():
-		return normalize_response_text(resp.text)
-
-	if hasattr(resp, "output") and resp.output:
-		for out in resp.output:
-			if hasattr(out, "content") and out.content:
-				for c in out.content:
-					if hasattr(c, "text") and c.text:
-						return normalize_response_text(c.text)
-
-	if isinstance(resp, dict):
-		def find_text(d):
-			if isinstance(d, str):
-				return d
-			if isinstance(d, dict):
-				for v in d.values():
-					t = find_text(v)
-					if t:
-						return t
-			if isinstance(d, list):
-				for item in d:
-					t = find_text(item)
-					if t:
-						return t
-			return None
-
-		t = find_text(resp)
-		if t:
-			return normalize_response_text(t)
-
-	return str(resp)
-
-
-def call_isstudio_via_genai(token: str, prompt: str, model: str | None = None) -> str:
-	model = model or os.environ.get("GENAI_MODEL", "gemini-3.5-flash")
-	client = genai.Client(api_key=token)
-	resp = client.interactions.create(model=model, input=prompt)
-	return extract_text_from_response(resp)
 
 
 def run():
@@ -173,21 +31,7 @@ def run():
 	gtin_from_input = extract_gtin(nome)
 	candidate_ncm = find_ncm_candidates(nome, ncm_table, top_n=5)
 
-	prompt = (
-		"Você é um assistente que busca informações públicas sobre um produto. "
-		f"Nome do produto: '{nome}'. "
-		"Use como referência a base local a seguir, mas priorize dados externos atualizados da web sempre que possível. "
-		f"Referências locais (RAG):\n{rag}\n"
-		"Procure também identificar o GTIN/EAN/UPC do produto. "
-		"Use o arquivo local de NCM quando possível para validar ou sugerir o código correto. "
-		"Forneça a hierarquia de categoria no estilo Amazon, por exemplo: Eletrônicos > Informática > Placas de Vídeo. "
-		"Retorne somente um JSON válido, sem explicações extras. "
-		"As chaves obrigatórias são: Nome, gtin, preço, categoria, categoria_hierarquia, ncm, confiabilidade. "
-		"O campo preço deve vir do custo de mercado atual do produto ou da melhor estimativa oficial disponível. "
-		"O campo ncm deve ser o código NCM correto para o produto. "
-		"Se não houver dados externos claros, use null para os campos desconhecidos e inclua apenas o valor mais provável ou melhor estimativa encontrada. "
-		"Não inclua markdown; apenas retorne um JSON puro ou um JSON dentro de blocos de código."
-	)
+	prompt = prompt_module.build_prompt(nome, rag)
 
 	if candidate_ncm:
 		prompt += "\nPossíveis NCMs locais para este produto:\n"
@@ -197,7 +41,7 @@ def run():
 	try:
 		print("Consultando a IA externa via genai client para obter/normalizar dados...")
 		token = os.environ.get("ISSTUDIO_TOKEN", DEFAULT_TOKEN)
-		resp_text = call_isstudio_via_genai(token, prompt, model=os.environ.get("GENAI_MODEL"))
+		resp_text = gemini.call_isstudio_via_genai(token, prompt, model=os.environ.get("GENAI_MODEL"))
 	except Exception as e:
 		print("Erro ao chamar o cliente genai:", e)
 		return
@@ -227,6 +71,7 @@ def run():
 			categoria_hierarquia = input("Hierarquia de categoria: ").strip() or None
 			ncm = input("NCM: ").strip() or None
 			confiabilidade = input("Confiabilidade (0-1): ").strip() or None
+			imagem = input("URL da imagem: ").strip() or None
 			produto = {
 				"Nome": nomef,
 				"preço": preco,
@@ -235,6 +80,7 @@ def run():
 				"categoria_hierarquia": categoria_hierarquia,
 				"ncm": ncm,
 				"confiabilidade": confiabilidade,
+				"imagem": imagem,
 			}
 		else:
 			print("Nada salvo.")
@@ -248,19 +94,48 @@ def run():
 		"categoria_hierarquia": produto.get("categoria_hierarquia"),
 		"ncm": produto.get("ncm"),
 		"confiabilidade": produto.get("confiabilidade"),
+		"imagem": produto.get("imagem") or produto.get("image") or produto.get("Image"),
 	}
 
+	# Validar e completar NCM - SEMPRE tenta buscar na base primeiro
 	if not entry["ncm"] and candidate_ncm:
 		entry["ncm"] = candidate_ncm[0].get("Codigo")
 		entry["ncm_fonte"] = "local"
+		print(f"✓ NCM encontrado na base local: {entry['ncm']}")
 	elif entry["ncm"]:
 		verified = find_ncm_by_code(str(entry["ncm"]), ncm_table)
 		entry["ncm_fonte"] = "local" if verified else "ia"
 		if verified:
 			entry["ncm_descricao_local"] = verified.get("Descricao")
+			print(f"✓ NCM validado na base local: {entry['ncm']}")
+		else:
+			print(f"⚠ NCM da IA não encontrado na base: {entry['ncm']}")
 
 	if not entry["categoria_hierarquia"] and entry["categoria"]:
 		entry["categoria_hierarquia"] = entry["categoria"]
+
+	# Calcular confiabilidade baseada em completude dos dados
+	campos_obrigatorios = ["Nome", "preço", "gtin", "categoria", "ncm"]
+	campos_preenchidos = sum(1 for campo in campos_obrigatorios if entry.get(campo))
+	percentual_completude = (campos_preenchidos / len(campos_obrigatorios)) * 100
+
+	if percentual_completude == 100:
+		confiabilidade_calculada = "Muito Alta" if entry.get("imagem") else "Alta"
+	elif percentual_completude >= 80:
+		confiabilidade_calculada = "Alta"
+	elif percentual_completude >= 60:
+		confiabilidade_calculada = "Média"
+	elif percentual_completude >= 40:
+		confiabilidade_calculada = "Baixa"
+	else:
+		confiabilidade_calculada = "Muito Baixa"
+
+	# Usar confiabilidade calculada como padrão, mas permitir override se informado pela IA
+	if not entry["confiabilidade"] or entry["confiabilidade"] == "Muito Baixa":
+		entry["confiabilidade"] = confiabilidade_calculada
+	
+	print(f"\nCompletude dos dados: {percentual_completude:.0f}% ({campos_preenchidos}/{len(campos_obrigatorios)} campos obrigatórios)")
+	print(f"Confiabilidade: {entry['confiabilidade']}")
 
 	print("JSON do produto retornado:")
 	print(json.dumps(entry, ensure_ascii=False, indent=2))
