@@ -2,6 +2,7 @@ import os
 import json
 
 import llm.model.gemini as gemini
+import llm.model.claude as claude
 import llm.prompt.prompt as prompt_module
 
 from repository.produtoRepository import (
@@ -24,8 +25,16 @@ def get_gemini_token() -> str | None:
 	return os.environ.get("GEMINI_API_KEY") or os.environ.get("ISSTUDIO_TOKEN")
 
 
+def get_claude_token() -> str | None:
+	return os.environ.get("CLAUDE_API_KEY")
+
+
 def call_llm(prompt: str) -> str:
-	"""Consulta o Gemini e retorna o texto da resposta."""
+	"""Consulta o provedor de IA configurado (LLM_PROVIDER=gemini|claude) e retorna o texto da resposta."""
+	provider = os.environ.get("LLM_PROVIDER", "gemini").strip().lower()
+	if provider == "claude":
+		print("Consultando Claude (com busca na web)...")
+		return claude.call_claude(get_claude_token(), prompt)
 	print("Consultando Gemini (com Google Search)...")
 	return gemini.call_gemini(get_gemini_token(), prompt)
 
